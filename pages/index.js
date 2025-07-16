@@ -19,14 +19,11 @@ const firebaseConfig = {
     measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
-
 // --- Firebase Initialization ---
-// Fallback to environment-injected config if process.env is not available
-const effectiveConfig = firebaseConfig.projectId ? firebaseConfig : (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {});
-const app = initializeApp(effectiveConfig);
+const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
-const appId = effectiveConfig.appId || (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
+const appId = firebaseConfig.appId || (typeof __app_id !== 'undefined' ? __app_id : 'default-app-id');
 
 
 // --- Game Constants ---
@@ -41,7 +38,7 @@ const ITEM_LIFESPAN = 10000;
 const GEM_LIFESPAN = 6000;
 
 // --- Player Constants ---
-const PLAYER_BASE_SPEED = 400; // Adjusted speed for click-to-move
+const PLAYER_BASE_SPEED = 250; // Adjusted speed for click-to-move
 const PLAYER_HITBOX_PADDING = 5;
 
 // --- Helper Function ---
@@ -290,7 +287,7 @@ const Game = () => {
         };
     }, [gameState, gameLoop]);
     
-    // --- [NEW] Handle Page Visibility to Pause Game ---
+    // --- Handle Page Visibility to Pause Game ---
     useEffect(() => {
         const handleVisibilityChange = () => {
             if (document.hidden) {
@@ -333,7 +330,10 @@ const Game = () => {
             player: { name: playerId, lives: 1, score: 0, x: GAME_WIDTH / 2 - PLAYER_SIZE / 2, y: GAME_HEIGHT - PLAYER_SIZE * 2, isInvincible: false, invincibleUntil: 0 },
             bullets: [], items: [], mathGems: [], floatingTexts: [], status: 'playing',
             gameStartTime: now, stageStartTime: now,
-            totalTime: 0, totalPausedTime: 0, pauseStartTime: 0,
+            totalTime: 0, 
+            totalPausedTime: 0, 
+            pausedTimeAtStageStart: 0, // [FIX] Initialize pause time for the stage
+            pauseStartTime: 0,
             displayScore: 0, remainingTime: duration,
             stage: startStage, stageDuration: duration,
             width: GAME_WIDTH, height: GAME_HEIGHT,
@@ -349,7 +349,8 @@ const Game = () => {
         const now = Date.now();
         const prevData = gameDataRef.current;
         const nextStage = prevData.stage + 1;
-        const pausedDuration = now - prevData.pauseStartTime;
+        const pausedDuration = prevData.pauseStartTime > 0 ? now - prevData.pauseStartTime : 0;
+        const newTotalPausedTime = prevData.totalPausedTime + pausedDuration;
         
         gameDataRef.current = {
             ...prevData,
@@ -358,7 +359,8 @@ const Game = () => {
             bullets: [], items: [], mathGems: [], floatingTexts: [],
             stage: nextStage,
             stageStartTime: now,
-            totalPausedTime: prevData.totalPausedTime + pausedDuration,
+            totalPausedTime: newTotalPausedTime,
+            pausedTimeAtStageStart: newTotalPausedTime, // [FIX] Record total pause time at the start of the new stage
             pauseStartTime: 0,
             remainingTime: prevData.stageDuration,
             lastBulletSpawn: now, lastHomingSpawn: now, lastSplitterSpawn: now, lastPatternSpawn: now,
@@ -409,7 +411,7 @@ const Game = () => {
     }, []);
 
     // --- Render Functions ---
-    const renderLobby = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-8 rounded-xl shadow-lg"> <h1 className="text-4xl font-bold text-green-400 mb-2">봄바르딜로 크로코딜러를 구해줘</h1> <p className="text-gray-300 mb-8">v3.19 Pausable</p> <div className="mb-4 mt-8"> <p className="text-gray-400">플레이어 ID:</p> <p className="text-lg font-bold text-white">{playerId}</p> </div> <div className="space-y-4 mt-8"> <button onClick={() => handleStartGame(1, false)} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 게임 시작 </button> <div className="pt-4"> <h3 className="text-lg text-yellow-400 mb-2">[디버그: 스테이지 선택 (15초)]</h3> <div className="grid grid-cols-3 gap-2"> {[1, 2, 3, 4, 5, 6].map(stage => ( <button key={stage} onClick={() => handleStartGame(stage, true)} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded-lg"> S{stage} </button> ))} </div> </div> </div> <div className="mt-10"> <h2 className="text-2xl font-bold text-yellow-400 mb-4">🏆 학교 랭킹 🏆</h2> <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto"> {rankings.length > 0 ? ( <ul className="space-y-2"> {rankings.map((r, index) => ( <li key={r.id} className={`flex justify-between items-center p-2 rounded ${index === 0 ? 'bg-yellow-500 text-gray-900 font-bold' : 'bg-gray-700'}`}> <span>{index + 1}. {r.playerId}</span> <span>{r.score} 점</span> </li> ))} </ul> ) : <p className="text-gray-400">랭킹을 불러오는 중...</p>} </div> </div> </div> );
+    const renderLobby = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-8 rounded-xl shadow-lg"> <h1 className="text-4xl font-bold text-green-400 mb-2">봄바르딜로 크로코딜러를 구해줘</h1> <p className="text-gray-300 mb-8">v3.20 Bugfix</p> <div className="mb-4 mt-8"> <p className="text-gray-400">플레이어 ID:</p> <p className="text-lg font-bold text-white">{playerId}</p> </div> <div className="space-y-4 mt-8"> <button onClick={() => handleStartGame(1, false)} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 게임 시작 </button> <div className="pt-4"> <h3 className="text-lg text-yellow-400 mb-2">[디버그: 스테이지 선택 (15초)]</h3> <div className="grid grid-cols-3 gap-2"> {[1, 2, 3, 4, 5, 6].map(stage => ( <button key={stage} onClick={() => handleStartGame(stage, true)} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded-lg"> S{stage} </button> ))} </div> </div> </div> <div className="mt-10"> <h2 className="text-2xl font-bold text-yellow-400 mb-4">🏆 학교 랭킹 🏆</h2> <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto"> {rankings.length > 0 ? ( <ul className="space-y-2"> {rankings.map((r, index) => ( <li key={r.id} className={`flex justify-between items-center p-2 rounded ${index === 0 ? 'bg-yellow-500 text-gray-900 font-bold' : 'bg-gray-700'}`}> <span>{index + 1}. {r.playerId}</span> <span>{r.score} 점</span> </li> ))} </ul> ) : <p className="text-gray-400">랭킹을 불러오는 중...</p>} </div> </div> </div> );
     const renderGameOver = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-10 rounded-xl shadow-lg"> <h1 className="text-5xl font-bold text-red-500 mb-4">게임 오버</h1> <div className="bg-gray-700 p-4 rounded-lg mb-6"> <h2 className="text-xl text-yellow-400 mb-2">최종 점수</h2> {gameDataRef.current && <p className="text-2xl text-white font-bold">{Math.floor(gameDataRef.current.finalScore) || 0} 점</p>} </div> <div className="mt-6"> <h3 className="text-xl font-bold text-yellow-400 mb-2">🏆 Top 3 🏆</h3> <div className="space-y-2 text-white"> {rankings.slice(0, 3).map((r, i) => ( <div key={r.id} className="flex justify-between p-2 bg-gray-700 rounded-lg"> <span>{i+1}. {r.playerId}</span> <span>{r.score} 점</span> </div> ))} </div> </div> <button onClick={handlePlayAgain} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105 mt-8"> 로비로 돌아가기 </button> </div> );
     const renderStageClear = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-10 rounded-xl shadow-lg flex flex-col items-center"> <h1 className="text-3xl font-bold text-green-400 mb-8"> 🐊 스테이지 클리어! 🐊 </h1> <p className="text-xl text-white mb-4"> 클리어한 스테이지: <span className="font-bold text-yellow-400">{gameDataRef.current?.stage}</span> </p> <button onClick={handleNextStage} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 다음 스테이지 진행하기 </button> </div> );
     const renderGame = () => (
@@ -453,8 +455,11 @@ const Game = () => {
 function updateGameLogic(gameData, now, deltaTime) {
     let { player } = gameData;
     
-    const timeInStageMs = (now - gameData.stageStartTime) - (gameData.totalPausedTime - gameData.initialPausedTime);
+    // [FIX] Correctly calculate time elapsed in the current stage, accounting for pauses.
+    const currentStagePausedTime = gameData.totalPausedTime - gameData.pausedTimeAtStageStart;
+    const timeInStageMs = (now - gameData.stageStartTime) - currentStagePausedTime;
     const timeInStageSec = timeInStageMs / 1000;
+
     if (timeInStageSec >= gameData.stageDuration && gameData.stage < 6) {
         gameData.status = 'stageClear';
         gameData.remainingTime = 0;
