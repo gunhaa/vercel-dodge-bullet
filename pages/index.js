@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 
 // --- Firebase SDK Import ---
 import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
 import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs, serverTimestamp } from "firebase/firestore";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
@@ -20,6 +21,7 @@ const firebaseConfig = {
 
 // --- Firebase 초기화 ---
 const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
 const db = getFirestore(app);
 const auth = getAuth(app);
 
@@ -36,7 +38,8 @@ const ITEM_LIFESPAN = 10000;
 const GEM_LIFESPAN = 6000;
 
 // --- 플레이어 상수 ---
-const PLAYER_BASE_SPEED = 4.0; 
+// TODO: 캐릭터의 기본 이동 속도를 조절합니다. (단위: 픽셀/초)
+const PLAYER_BASE_SPEED = 240; 
 const PLAYER_HITBOX_PADDING = 5;
 
 // 도우미 함수: 랜덤 숫자 생성
@@ -51,9 +54,11 @@ const Game = () => {
     const [playerId, setPlayerId] = useState('');
     
     // --- 조작 상태 관리 ---
-    const targetPositionRef = useRef(null);
+    const movementDirectionRef = useRef({ x: 0, y: 0 });
+    const isPointerDownRef = useRef(false);
     const gameAreaRef = useRef(null);
     const gameLoopRef = useRef();
+    const lastFrameTimeRef = useRef(Date.now());
 
     // --- Player ID 생성 및 관리 ---
     useEffect(() => {
@@ -119,33 +124,26 @@ const Game = () => {
         setGameData(prevGameData => {
             if (!prevGameData || prevGameData.status !== 'playing') return prevGameData;
 
+            const now = Date.now();
+            const deltaTime = (now - lastFrameTimeRef.current) / 1000;
+            lastFrameTimeRef.current = now;
+
             let newGameData = JSON.parse(JSON.stringify(prevGameData));
             let player = newGameData.player;
-            const now = Date.now();
-
+            
             let speedMultiplier = 1.0; 
             if (newGameData.stage === 1) speedMultiplier = 0.8;
             else if (newGameData.stage === 3) speedMultiplier = 0.9;
             const currentPlayerSpeed = PLAYER_BASE_SPEED * speedMultiplier;
 
-            // --- 터치/클릭 기반 플레이어 이동 ---
-            if (player.lives > 0 && targetPositionRef.current) {
-                const { x: targetX, y: targetY } = targetPositionRef.current;
-                const dx = targetX - player.x;
-                const dy = targetY - player.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-
-                if (distance < currentPlayerSpeed) {
-                    player.x = targetX;
-                    player.y = targetY;
-                    targetPositionRef.current = null; // 목표 도달
-                } else {
-                    player.x += (dx / distance) * currentPlayerSpeed;
-                    player.y += (dy / distance) * currentPlayerSpeed;
-                }
+            if (player.lives > 0 && (movementDirectionRef.current.x !== 0 || movementDirectionRef.current.y !== 0)) {
+                const { x, y } = movementDirectionRef.current;
+                player.x += x * currentPlayerSpeed * deltaTime;
+                player.y += y * currentPlayerSpeed * deltaTime;
+                player.x = Math.max(0, Math.min(newGameData.width - PLAYER_SIZE, player.x));
+                player.y = Math.max(0, Math.min(newGameData.height - PLAYER_SIZE, player.y));
             }
 
-            // 1. 시간 및 스테이지 업데이트
             const timeInStageMs = now - newGameData.stageStartTime;
             const timeInStageSec = timeInStageMs / 1000;
             
@@ -163,7 +161,6 @@ const Game = () => {
             newGameData.displayScore = player.score + effectiveElapsedTime * 0.01;
             newGameData.remainingTime = newGameData.stageDuration - Math.floor(timeInStageSec);
 
-            // --- 총알 분열 로직 ---
             const bulletsToSplit = [];
             newGameData.bullets = newGameData.bullets.filter(b => {
                 if (b.isSplitter && now >= b.splitAt) {
@@ -173,16 +170,16 @@ const Game = () => {
                 return true;
             });
             bulletsToSplit.forEach(b => {
-                spawnCrossPattern(newGameData, b.x, b.y, 2.5);
+                spawnCrossPattern(newGameData, b.x, b.y, 150);
             });
 
             newGameData.bullets = newGameData.bullets.map(b => {
                 if (b.isHoming && player.lives > 0) {
                     const angle = Math.atan2(player.y - b.y, player.x - b.x);
-                    b.dx += Math.cos(angle) * 0.05;
-                    b.dy += Math.sin(angle) * 0.05;
+                    b.dx += Math.cos(angle) * 3 * deltaTime;
+                    b.dy += Math.sin(angle) * 3 * deltaTime;
                 }
-                return { ...b, x: b.x + b.dx, y: b.y + b.dy };
+                return { ...b, x: b.x + b.dx * deltaTime, y: b.y + b.dy * deltaTime };
             }).filter(b => b.x > -BULLET_SIZE && b.x < newGameData.width && b.y > -BULLET_SIZE && b.y < newGameData.height);
 
             generateBullets(newGameData, now, timeInStageSec);
@@ -319,41 +316,41 @@ const Game = () => {
         let speed;
         switch(stage) {
             case 1: 
-                // TODO: [스테이지 1] 총알 속도 조절
-                speed = 1.8; 
+                // TODO: [스테이지 1] 총알 속도 조절 (픽셀/초)
+                speed = 108; 
                 const stage1Interval = 1000 - (timeInStage / stageDuration) * 800; 
                 if (now - lastBulletSpawn > Math.max(200, stage1Interval)) { spawnSideBullet(gameData, speed); gameData.lastBulletSpawn = now; } 
                 break;
             case 2: 
-                // TODO: [스테이지 2] 일반탄/유도탄 속도 조절
-                speed = 2.0; 
+                // TODO: [스테이지 2] 일반탄/유도탄 속도 조절 (픽셀/초)
+                speed = 120; 
                 if (now - lastBulletSpawn > 700) { spawnSideBullet(gameData, speed); gameData.lastBulletSpawn = now; } 
                 if (now - lastHomingSpawn > 3000) { spawnHomingBullet(gameData, speed * 0.7); gameData.lastHomingSpawn = now; } 
                 break;
             case 3: 
-                // TODO: [스테이지 3] 일반탄/분열탄 속도 조절
-                speed = 2.2; 
+                // TODO: [스테이지 3] 일반탄/분열탄 속도 조절 (픽셀/초)
+                speed = 132; 
                 if (now - lastBulletSpawn > 700) { spawnSideBullet(gameData, speed); gameData.lastBulletSpawn = now; } 
                 if (now - lastSplitterSpawn > 3000) { spawnSideBullet(gameData, speed, true); gameData.lastSplitterSpawn = now; } 
                 break;
             case 4: 
-                // TODO: [스테이지 4] 특수 총알 속도 조절
-                speed = 2.5; 
+                // TODO: [스테이지 4] 특수 총알 속도 조절 (픽셀/초)
+                speed = 150; 
                 if (now - lastBulletSpawn > 600) { spawnSideBullet(gameData, speed); gameData.lastBulletSpawn = now; } 
                 if (now - lastHomingSpawn > 2800) { spawnHomingBullet(gameData, speed * 0.75); gameData.lastHomingSpawn = now; } 
                 if (now - lastSplitterSpawn > 2500) { spawnSideBullet(gameData, speed, true); gameData.lastSplitterSpawn = now; } 
                 break;
             case 5: 
-                // TODO: [스테이지 5] 특수 총알 속도 조절
-                speed = 3.8; 
+                // TODO: [스테이지 5] 특수 총알 속도 조절 (픽셀/초)
+                speed = 228; 
                 if (now - lastBulletSpawn > 400) { spawnSideBullet(gameData, speed); gameData.lastBulletSpawn = now; } 
-                if (now - lastPatternSpawn > 5000) { spawnImpossibleWallPattern(gameData, 2.5, timeInStage); gameData.lastPatternSpawn = now; } 
+                if (now - lastPatternSpawn > 5000) { spawnImpossibleWallPattern(gameData, 150, timeInStage); gameData.lastPatternSpawn = now; } 
                 break;
             default: 
-                // TODO: [무한 모드] 총알 속도 조절
+                // TODO: [무한 모드] 총알 속도 조절 (픽셀/초)
                 const infiniteBonus = (stage - 6) * 50; 
                 const spawnInterval = 300 - infiniteBonus; 
-                speed = 4 + (stage - 6) * 0.2; 
+                speed = 240 + (stage - 6) * 12;
                 if (now - lastBulletSpawn > Math.max(50, spawnInterval)) { spawnSideBullet(gameData, speed, true); if(Math.random() < 0.2) spawnAimedBullet(gameData, speed); if(Math.random() < 0.1) spawnHomingBullet(gameData, speed * 0.8); gameData.lastBulletSpawn = now; } 
                 break;
         }
@@ -361,6 +358,7 @@ const Game = () => {
     
     useEffect(() => {
         if (gameState === 'playing') {
+            lastFrameTimeRef.current = Date.now();
             gameLoopRef.current = requestAnimationFrame(gameLoop);
         } else if (gameLoopRef.current) {
             cancelAnimationFrame(gameLoopRef.current);
@@ -420,22 +418,41 @@ const Game = () => {
     
     // --- 터치/클릭 이벤트 핸들러 ---
     const handlePointerDown = (e) => {
-        e.preventDefault();
-        targetPositionRef.current = getPointerPosition(e);
+        isPointerDownRef.current = true;
+        updateMovementDirection(e);
     };
 
-    const getPointerPosition = (e) => {
-        if (!gameAreaRef.current) return null;
+    const handlePointerMove = (e) => {
+        if (isPointerDownRef.current) {
+            updateMovementDirection(e);
+        }
+    };
+
+    const handlePointerUp = () => {
+        isPointerDownRef.current = false;
+        movementDirectionRef.current = { x: 0, y: 0 };
+    };
+
+    const updateMovementDirection = (e) => {
+        if (!gameAreaRef.current || !gameData) return;
         const rect = gameAreaRef.current.getBoundingClientRect();
         const touch = e.touches ? e.touches[0] : e;
-        return {
-            x: touch.clientX - rect.left,
-            y: touch.clientY - rect.top,
-        };
+        const targetX = touch.clientX - rect.left;
+        const targetY = touch.clientY - rect.top;
+
+        const dx = targetX - gameData.player.x;
+        const dy = targetY - gameData.player.y;
+
+        const magnitude = Math.sqrt(dx * dx + dy * dy);
+        if (magnitude > 10) { // 일정 거리 이상일 때만 방향 업데이트
+             movementDirectionRef.current = { x: dx / magnitude, y: dy / magnitude };
+        } else {
+             movementDirectionRef.current = { x: 0, y: 0 };
+        }
     };
 
     // --- 렌더링 ---
-    const renderLobby = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-8 rounded-xl shadow-lg"> <h1 className="text-4xl font-bold text-green-400 mb-2">봄바르딜로 크로코딜로를 구해줘 v4.0</h1> <p className="text-gray-300 mb-8">v4.00 for Mobile</p> <div className="mb-4 mt-8"> <p className="text-gray-400">플레이어 ID:</p> <p className="text-lg font-bold text-white">{playerId}</p> </div> <div className="space-y-4 mt-8"> <button onClick={() => handleStartGame(1, false)} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 게임 시작 </button> <div className="pt-4"> <h3 className="text-lg text-yellow-400 mb-2">[디버그: 스테이지 선택 (15초)]</h3> <div className="grid grid-cols-3 gap-2"> {[1, 2, 3, 4, 5, 6].map(stage => ( <button key={stage} onClick={() => handleStartGame(stage, true)} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded-lg"> S{stage} </button> ))} </div> </div> </div> <div className="mt-10"> <h2 className="text-2xl font-bold text-yellow-400 mb-4">🏆 학교 랭킹 🏆</h2> <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto"> {rankings.length > 0 ? ( <ul className="space-y-2"> {rankings.map((r, index) => ( <li key={r.id} className={`flex justify-between items-center p-2 rounded ${index === 0 ? 'bg-yellow-500 text-gray-900 font-bold' : 'bg-gray-700'}`}> <span>{index + 1}. {r.playerId}</span> <span>{r.score} 점</span> </li> ))} </ul> ) : <p className="text-gray-400">랭킹을 불러오는 중...</p>} </div> </div> </div> );
+    const renderLobby = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-8 rounded-xl shadow-lg"> <h1 className="text-4xl font-bold text-green-400 mb-2">봄바르딜로 크로코딜러를 구해줘</h1> <p className="text-gray-300 mb-8">v3.17 Mobile</p> <div className="mb-4 mt-8"> <p className="text-gray-400">플레이어 ID:</p> <p className="text-lg font-bold text-white">{playerId}</p> </div> <div className="space-y-4 mt-8"> <button onClick={() => handleStartGame(1, false)} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 게임 시작 </button> <div className="pt-4"> <h3 className="text-lg text-yellow-400 mb-2">[디버그: 스테이지 선택 (15초)]</h3> <div className="grid grid-cols-3 gap-2"> {[1, 2, 3, 4, 5, 6].map(stage => ( <button key={stage} onClick={() => handleStartGame(stage, true)} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded-lg"> S{stage} </button> ))} </div> </div> </div> <div className="mt-10"> <h2 className="text-2xl font-bold text-yellow-400 mb-4">🏆 학교 랭킹 🏆</h2> <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto"> {rankings.length > 0 ? ( <ul className="space-y-2"> {rankings.map((r, index) => ( <li key={r.id} className={`flex justify-between items-center p-2 rounded ${index === 0 ? 'bg-yellow-500 text-gray-900 font-bold' : 'bg-gray-700'}`}> <span>{index + 1}. {r.playerId}</span> <span>{r.score} 점</span> </li> ))} </ul> ) : <p className="text-gray-400">랭킹을 불러오는 중...</p>} </div> </div> </div> );
     const renderGameOver = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-10 rounded-xl shadow-lg"> <h1 className="text-5xl font-bold text-red-500 mb-4">게임 오버</h1> <div className="bg-gray-700 p-4 rounded-lg mb-6"> <h2 className="text-xl text-yellow-400 mb-2">최종 점수</h2> {gameData && <p className="text-2xl text-white font-bold">{Math.floor(gameData.finalScore) || 0} 점</p>} </div> <div className="mt-6"> <h3 className="text-xl font-bold text-yellow-400 mb-2">🏆 Top 3 🏆</h3> <div className="space-y-2 text-white"> {rankings.slice(0, 3).map((r, i) => ( <div key={r.id} className="flex justify-between p-2 bg-gray-700 rounded-lg"> <span>{i+1}. {r.playerId}</span> <span>{r.score} 점</span> </div> ))} </div> </div> <button onClick={handlePlayAgain} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105 mt-8"> 로비로 돌아가기 </button> </div> );
     const renderStageClear = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-10 rounded-xl shadow-lg flex flex-col items-center"> <h1 className="text-3xl font-bold text-green-400 mb-8"> 🐊 스테이지 클리어! 🐊 </h1> <p className="text-xl text-white mb-4"> 클리어한 스테이지: <span className="font-bold text-yellow-400">{gameData.stage}</span> </p> <button onClick={handleNextStage} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 다음 스테이지 진행하기 </button> </div> );
     
@@ -460,7 +477,13 @@ const Game = () => {
                     className="relative bg-gray-800 border-4 border-gray-600 overflow-hidden w-full" 
                     style={{ aspectRatio: `${GAME_WIDTH} / ${GAME_HEIGHT}`}}
                     onMouseDown={handlePointerDown}
+                    onMouseMove={handlePointerMove}
+                    onMouseUp={handlePointerUp}
+                    onMouseLeave={handlePointerUp}
                     onTouchStart={handlePointerDown}
+                    onTouchMove={handlePointerMove}
+                    onTouchEnd={handlePointerUp}
+                    onTouchCancel={handlePointerUp}
                 >
                     <div className={`absolute ${player.isInvincible ? 'opacity-50' : ''}`} style={{ left: player.x, top: player.y, width: PLAYER_SIZE, height: PLAYER_SIZE, filter: player.isInvincible ? 'drop-shadow(0 0 5px cyan)' : 'none' }}>
                        <span className="text-3xl">{player.lives > 0 ? '🐊' : '💀'}</span>
@@ -491,4 +514,3 @@ const Game = () => {
 export default function BombardilloCrocodilloPage() {
     return <Game />;
 }
-
