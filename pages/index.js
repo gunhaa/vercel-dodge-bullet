@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+
+// --- Firebase SDK Import ---
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, query, orderBy, limit, getDocs, serverTimestamp } from "firebase/firestore";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "firebase/auth";
 
 
 // --- Firebase 설정 ---
-// 제공해주신 설정을 사용합니다.
-// TODO: 실제 배포시에는 환경 변수 등을 사용하여 안전하게 관리하세요.
+// TODO: config 변경 필요
 const firebaseConfig = {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
     authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
@@ -50,8 +51,7 @@ const Game = () => {
     const [playerId, setPlayerId] = useState('');
     
     // --- 조작 상태 관리 ---
-    const movementDirectionRef = useRef({ x: 0, y: 0 });
-    const isPointerDownRef = useRef(false);
+    const targetPositionRef = useRef(null);
     const gameAreaRef = useRef(null);
     const gameLoopRef = useRef();
 
@@ -123,20 +123,26 @@ const Game = () => {
             let player = newGameData.player;
             const now = Date.now();
 
-            // --- 스테이지별 속도 조절 ---
             let speedMultiplier = 1.0; 
             if (newGameData.stage === 1) speedMultiplier = 0.8;
             else if (newGameData.stage === 3) speedMultiplier = 0.9;
             const currentPlayerSpeed = PLAYER_BASE_SPEED * speedMultiplier;
 
             // --- 터치/클릭 기반 플레이어 이동 ---
-            if (player.lives > 0 && (movementDirectionRef.current.x !== 0 || movementDirectionRef.current.y !== 0)) {
-                const { x, y } = movementDirectionRef.current;
-                player.x += x * currentPlayerSpeed;
-                player.y += y * currentPlayerSpeed;
+            if (player.lives > 0 && targetPositionRef.current) {
+                const { x: targetX, y: targetY } = targetPositionRef.current;
+                const dx = targetX - player.x;
+                const dy = targetY - player.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
 
-                player.x = Math.max(0, Math.min(newGameData.width - PLAYER_SIZE, player.x));
-                player.y = Math.max(0, Math.min(newGameData.height - PLAYER_SIZE, player.y));
+                if (distance < currentPlayerSpeed) {
+                    player.x = targetX;
+                    player.y = targetY;
+                    targetPositionRef.current = null; // 목표 도달
+                } else {
+                    player.x += (dx / distance) * currentPlayerSpeed;
+                    player.y += (dy / distance) * currentPlayerSpeed;
+                }
             }
 
             // 1. 시간 및 스테이지 업데이트
@@ -147,7 +153,7 @@ const Game = () => {
                 setGameState('stageClear');
                 newGameData.status = 'stageClear';
                 newGameData.remainingTime = 0;
-                newGameData.pauseStartTime = now; // 일시정지 시작 시간 기록
+                newGameData.pauseStartTime = now;
                 return newGameData;
             }
             
@@ -429,7 +435,7 @@ const Game = () => {
     };
 
     // --- 렌더링 ---
-    const renderLobby = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-8 rounded-xl shadow-lg"> <h1 className="text-4xl font-bold text-green-400 mb-2">봄바르딜로 크로코딜러를 구해줘</h1> <p className="text-gray-300 mb-8">v3.16 Mobile</p> <div className="mb-4 mt-8"> <p className="text-gray-400">플레이어 ID:</p> <p className="text-lg font-bold text-white">{playerId}</p> </div> <div className="space-y-4 mt-8"> <button onClick={() => handleStartGame(1, false)} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 게임 시작 </button> <div className="pt-4"> <h3 className="text-lg text-yellow-400 mb-2">[디버그: 스테이지 선택 (15초)]</h3> <div className="grid grid-cols-3 gap-2"> {[1, 2, 3, 4, 5, 6].map(stage => ( <button key={stage} onClick={() => handleStartGame(stage, true)} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded-lg"> S{stage} </button> ))} </div> </div> </div> <div className="mt-10"> <h2 className="text-2xl font-bold text-yellow-400 mb-4">🏆 학교 랭킹 🏆</h2> <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto"> {rankings.length > 0 ? ( <ul className="space-y-2"> {rankings.map((r, index) => ( <li key={r.id} className={`flex justify-between items-center p-2 rounded ${index === 0 ? 'bg-yellow-500 text-gray-900 font-bold' : 'bg-gray-700'}`}> <span>{index + 1}. {r.playerId}</span> <span>{r.score} 점</span> </li> ))} </ul> ) : <p className="text-gray-400">랭킹을 불러오는 중...</p>} </div> </div> </div> );
+    const renderLobby = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-8 rounded-xl shadow-lg"> <h1 className="text-4xl font-bold text-green-400 mb-2">봄바르딜로 크로코딜로를 구해줘 v4.0</h1> <p className="text-gray-300 mb-8">v4.00 for Mobile</p> <div className="mb-4 mt-8"> <p className="text-gray-400">플레이어 ID:</p> <p className="text-lg font-bold text-white">{playerId}</p> </div> <div className="space-y-4 mt-8"> <button onClick={() => handleStartGame(1, false)} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 게임 시작 </button> <div className="pt-4"> <h3 className="text-lg text-yellow-400 mb-2">[디버그: 스테이지 선택 (15초)]</h3> <div className="grid grid-cols-3 gap-2"> {[1, 2, 3, 4, 5, 6].map(stage => ( <button key={stage} onClick={() => handleStartGame(stage, true)} className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-3 rounded-lg"> S{stage} </button> ))} </div> </div> </div> <div className="mt-10"> <h2 className="text-2xl font-bold text-yellow-400 mb-4">🏆 학교 랭킹 🏆</h2> <div className="bg-gray-900 rounded-lg p-4 max-h-48 overflow-y-auto"> {rankings.length > 0 ? ( <ul className="space-y-2"> {rankings.map((r, index) => ( <li key={r.id} className={`flex justify-between items-center p-2 rounded ${index === 0 ? 'bg-yellow-500 text-gray-900 font-bold' : 'bg-gray-700'}`}> <span>{index + 1}. {r.playerId}</span> <span>{r.score} 점</span> </li> ))} </ul> ) : <p className="text-gray-400">랭킹을 불러오는 중...</p>} </div> </div> </div> );
     const renderGameOver = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-10 rounded-xl shadow-lg"> <h1 className="text-5xl font-bold text-red-500 mb-4">게임 오버</h1> <div className="bg-gray-700 p-4 rounded-lg mb-6"> <h2 className="text-xl text-yellow-400 mb-2">최종 점수</h2> {gameData && <p className="text-2xl text-white font-bold">{Math.floor(gameData.finalScore) || 0} 점</p>} </div> <div className="mt-6"> <h3 className="text-xl font-bold text-yellow-400 mb-2">🏆 Top 3 🏆</h3> <div className="space-y-2 text-white"> {rankings.slice(0, 3).map((r, i) => ( <div key={r.id} className="flex justify-between p-2 bg-gray-700 rounded-lg"> <span>{i+1}. {r.playerId}</span> <span>{r.score} 점</span> </div> ))} </div> </div> <button onClick={handlePlayAgain} className="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105 mt-8"> 로비로 돌아가기 </button> </div> );
     const renderStageClear = () => ( <div className="w-full max-w-sm text-center bg-gray-800 p-10 rounded-xl shadow-lg flex flex-col items-center"> <h1 className="text-3xl font-bold text-green-400 mb-8"> 🐊 스테이지 클리어! 🐊 </h1> <p className="text-xl text-white mb-4"> 클리어한 스테이지: <span className="font-bold text-yellow-400">{gameData.stage}</span> </p> <button onClick={handleNextStage} className="w-full bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-4 rounded-lg text-xl transition-transform transform hover:scale-105"> 다음 스테이지 진행하기 </button> </div> );
     
@@ -485,3 +491,4 @@ const Game = () => {
 export default function BombardilloCrocodilloPage() {
     return <Game />;
 }
+
